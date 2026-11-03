@@ -13,12 +13,16 @@ export interface SceneHandle {
   rebuild(layout: Layout): void;
   setTheme(theme: ThemePalette): void;
   update(dt: number, state: AppState, sim: SimBridge): void;
+  /** Highlight the object under the cursor; null clears it. */
+  setHover(kind: 'sign' | 'lamp' | null, id: number): void;
+  /** Paint visitor-supplied copy onto the landmark sign ('' restores the generated text). */
+  setHeroText(text: string): void;
   dispose(): void;
 }
 
 type Recolor = (theme: ThemePalette) => void;
 type SignVisual = { group: THREE.Group; face: THREE.Mesh; glow: THREE.MeshBasicMaterial; base: THREE.Vector3; colorIndex: number };
-type LampVisual = { group: THREE.Group; glow: THREE.MeshStandardMaterial; cone: THREE.MeshBasicMaterial; pool: THREE.MeshBasicMaterial; colorIndex: number };
+type LampVisual = { group: THREE.Group; glow: THREE.MeshStandardMaterial; cone: THREE.ShaderMaterial; pool: THREE.MeshBasicMaterial; colorIndex: number };
 type SignalVisual = { lenses: THREE.MeshStandardMaterial[]; glows: THREE.SpriteMaterial[] };
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -48,6 +52,29 @@ void main(){
   gl_FragColor=vec4(c,.97);
 }`;
 
+const coneVertex = `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`;
+// A hard cone silhouette reads as a tent; fade it at the ground and at the rim.
+const coneFragment = `uniform vec3 color; uniform float strength; varying vec2 vUv;
+void main(){
+  float vertical = pow(clamp(vUv.y, 0.0, 1.0), 1.4);
+  float rim = smoothstep(0.0, 0.30, vUv.x) * smoothstep(1.0, 0.70, vUv.x);
+  float a = strength * vertical * (0.25 + 0.75 * rim);
+  if (a < 0.002) discard;
+  gl_FragColor = vec4(color, a);
+}`;
+const smearVertex = `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`;
+const smearFragment = `uniform sampler2D map; uniform float opacity; uniform float time; varying vec2 vUv;
+void main(){
+  // Stretch a thin band of the sign downwards so it reads as a neon bleed in the asphalt.
+  float wobble = sin(vUv.y * 26.0 + time * 1.7) * 0.006 + sin(vUv.y * 9.0 - time * 0.9) * 0.010;
+  vec2 uv = vec2(vUv.x + wobble, 0.52 + (0.5 - vUv.y) * 0.42);
+  vec4 tex = texture2D(map, uv);
+  float near = smoothstep(0.0, 0.10, vUv.y);
+  float fade = pow(1.0 - vUv.y, 1.7) * near;
+  float a = tex.a * fade * opacity;
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(tex.rgb, a);
+}`;
 const wetVertex = `varying vec4 vReflect; varying vec3 vWorld; varying vec2 vUv; uniform mat4 textureMatrix;
 void main(){ vUv=uv; vec4 wp=modelMatrix*vec4(position,1.); vWorld=wp.xyz; vReflect=textureMatrix*wp; gl_Position=projectionMatrix*viewMatrix*wp; }`;
 const wetFragment = `uniform sampler2D reflectionMap; uniform vec3 tint; uniform float wet; uniform float time;
@@ -86,6 +113,13 @@ export function createScene(ctx: RenderContext): SceneHandle {
   };
   const lamps: LampVisual[] = [];
   const signals: SignalVisual[] = [];
+  // Cheap neon "smears" on the wet road: one additive quad per facade sign,
+  // reusing the sign texture instead of paying for a second reflection pass.
+  const smears: { material: THREE.ShaderMaterial; base: number }[] = [];
+  let hoverKind: 'sign' | 'lamp' | null = null;
+  let hoverId = -1;
+  let heroOverride = '';
+  const heroVisuals: { def: SignDef; visual: SignVisual; neon: string; texture: THREE.Texture; score: number }[] = [];
   let theme = ctx.theme;
   let layout = ctx.layout;
   let waterMesh: THREE.Mesh | null = null;
@@ -94,12 +128,15 @@ export function createScene(ctx: RenderContext): SceneHandle {
   let wetUniformsRef: { wet: { value: number }; time: { value: number } } | null = null;
   let skyUniforms: { top: { value: THREE.Color }; horizon: { value: THREE.Color }; bottom: { value: THREE.Color }; day: { value: number } } | null = null;
   let skyStars: THREE.Points | null = null;
+  let moonMaterial: THREE.SpriteMaterial | null = null;
   let key: THREE.DirectionalLight | null = null;
   let hemi: THREE.HemisphereLight | null = null;
   let ambient: THREE.AmbientLight | null = null;
   const tmpColor = new THREE.Color();
-  // From the east quay: the canal occupies the foreground while the intersection recedes between buildings.
-  const cameraHome = { position: new THREE.Vector3(40, 9.5, 42), target: new THREE.Vector3(-2, 7.5, -4) };
+  // Street-level, a few metres off the east quay: the intersection fills the frame and the
+  // canal stays a foreground edge instead of dominating the shot. Keep in sync with
+  // HERO_CAMERA / HERO_TARGET in src/core/layout.rs.
+  const cameraHome = { position: new THREE.Vector3(24, 7, 26), target: new THREE.Vector3(-6, 6, -10) };
 
   const ownMaterial = <T extends THREE.Material>(material: T): T => { materials.add(material); return material; };
   const ownTexture = <T extends THREE.Texture>(texture: T): T => { textures.add(texture); return texture; };
@@ -132,7 +169,7 @@ export function createScene(ctx: RenderContext): SceneHandle {
     const curb = standard(theme.buildingTrim, .65, .08);
     const paint = ownMaterial(new THREE.MeshStandardMaterial({ color: '#d7d1c2', roughness: .55, metalness: .1, emissive: '#423e37', emissiveIntensity: .15 }));
     const wet = ownMaterial(new THREE.MeshBasicMaterial({ color: theme.accent2, transparent: true, opacity: .035, blending: THREE.AdditiveBlending, depthWrite: false }));
-    addRecolor((p) => { asphaltTint.night.set(p.asphalt); asphaltTint.day.copy(asphaltTint.night).lerp(WHITE, .22); asphalt.color.copy(asphaltTint.night); asphalt.emissive.set(p.ground); sidewalkTint.night.set(p.sidewalk); sidewalkTint.day.copy(sidewalkTint.night).lerp(WHITE, .32); sidewalk.color.copy(sidewalkTint.night); sidewalk.emissive.set(p.ground); curb.color.set(p.buildingTrim); wet.color.set(p.accent2); });
+    addRecolor((p) => { asphaltTint.night.set(p.asphalt); asphaltTint.day.copy(asphaltTint.night).lerp(WHITE, .14); asphalt.color.copy(asphaltTint.night); asphalt.emissive.set(p.ground); sidewalkTint.night.set(p.sidewalk); sidewalkTint.day.copy(sidewalkTint.night).lerp(WHITE, .24); sidewalk.color.copy(sidewalkTint.night); sidewalk.emissive.set(p.ground); curb.color.set(p.buildingTrim); wet.color.set(p.accent2); });
     // Main road and crossing road, leaving their overlap intentionally shared for a broad intersection.
     box(20, .08, 144, asphalt, 0, -.04, 0);
     box(144, .081, 16, asphalt, 0, -.039, 0);
@@ -324,31 +361,38 @@ export function createScene(ctx: RenderContext): SceneHandle {
     }
   }
 
-  function signTexture(def: SignDef, neon: string): THREE.CanvasTexture {
-    return canvasTexture(512, 192, (g, w, h) => {
+  function signTexture(def: SignDef, neon: string, override = ''): THREE.CanvasTexture {
+    const text = override || def.text;
+    // Hero signs are several times wider on screen than the rest, so they pay for pixels.
+    const hero = def.hero === true;
+    return canvasTexture(hero ? 1024 : 512, hero ? 384 : 192, (g, w, h) => {
       const vertical = def.kind === 'vertical';
       g.fillStyle = '#05050a'; g.fillRect(0, 0, w, h);
-      g.strokeStyle = neon; g.lineWidth = 6; g.strokeRect(8, 8, w - 16, h - 16);
+      g.strokeStyle = neon; g.lineWidth = hero ? 11 : 6; g.strokeRect(8, 8, w - 16, h - 16);
       const font = def.font === 'serif' ? 'serif' : def.font === 'mono' ? 'monospace' : def.font === 'display' ? 'Impact, sans-serif' : 'Arial, "Microsoft YaHei", sans-serif';
-      const label = vertical ? Array.from(def.text).join('\n') : def.text;
-      const size = vertical ? Math.min(80, (h - 18) / Math.max(1, Array.from(def.text).length)) : Math.min(76, (w - 28) / Math.max(1, def.text.length * .67));
+      const label = vertical ? Array.from(text).join('\n') : text;
+      const size = vertical
+        ? Math.min(hero ? 150 : 80, (h - 18) / Math.max(1, Array.from(text).length))
+        : hero
+          ? Math.min(h * .58, (w - 56) / Math.max(1, Array.from(text).length * 1.03))
+          : Math.min(76, (w - 28) / Math.max(1, text.length * .67));
       g.font = `bold ${size}px ${font}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.shadowColor = neon; g.shadowBlur = 28; g.fillStyle = neon;
-      if (vertical) Array.from(def.text).forEach((ch, i, list) => g.fillText(ch, w / 2, (i + .5) * h / list.length)); else g.fillText(label, w / 2, h / 2 + 3);
+      g.shadowColor = neon; g.shadowBlur = hero ? 44 : 28; g.fillStyle = neon;
+      if (vertical) Array.from(text).forEach((ch, i, list) => g.fillText(ch, w / 2, (i + .5) * h / list.length)); else g.fillText(label, w / 2, h / 2 + 3);
       g.shadowBlur = 0; g.strokeStyle = '#fff7fc'; g.lineWidth = 1.1;
-      if (vertical) Array.from(def.text).forEach((ch, i, list) => g.strokeText(ch, w / 2, (i + .5) * h / list.length)); else g.strokeText(label, w / 2, h / 2 + 3);
+      if (vertical) Array.from(text).forEach((ch, i, list) => g.strokeText(ch, w / 2, (i + .5) * h / list.length)); else g.strokeText(label, w / 2, h / 2 + 3);
     });
   }
 
   function buildSigns(): void {
     for (const def of layout.signs) {
       const group = new THREE.Group(); group.position.set(def.x, def.y, def.z); group.rotation.y = def.rotY; group.userData.signId = def.id; root.add(group);
-      const neon = theme.neon[def.colorIndex % 4]; const tex = signTexture(def, neon);
+      const neon = theme.neon[def.colorIndex % 4]; const tex = signTexture(def, neon, def.hero ? heroOverride : '');
       const backing = new THREE.Mesh(new THREE.BoxGeometry(def.w + .2, def.h + .2, .14), standard('#090811', .4, .55)); backing.position.z = -.075; group.add(backing);
       const mat = ownMaterial(new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false, color: '#ffffff' }));
       const face = new THREE.Mesh(new THREE.PlaneGeometry(def.w, def.h), mat); face.position.z = .01; face.userData.signId = def.id; group.add(face);
       const glow = ownMaterial(new THREE.MeshBasicMaterial({ color: neon, transparent: true, opacity: .26, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
-      const halo = new THREE.Mesh(new THREE.PlaneGeometry(def.w * 1.3, def.h * 1.3), glow); halo.position.z = -.10; group.add(halo);
+      const halo = new THREE.Mesh(new THREE.PlaneGeometry(def.w * (def.hero ? 1.06 : 1.3), def.h * (def.hero ? 1.26 : 1.3)), glow); halo.position.z = -.10; group.add(halo);
       // Two thin brackets make a facade sign feel physically attached.
       const bracket = standard(theme.buildingTrim, .45, .72);
       addRecolor((p) => bracket.color.set(p.buildingTrim));
@@ -360,6 +404,33 @@ export function createScene(ctx: RenderContext): SceneHandle {
       addRecolor((p) => { glow.color.set(p.neon[def.colorIndex % 4]); mat.color.set('#ffffff'); });
       signs[def.id] = { group, face, glow, base: group.position.clone(), colorIndex: def.colorIndex };
       pickables.signs.push(group);
+      if (def.hero) {
+        // Longest apparent width from the default camera: that is the sign a visitor reads first.
+        const distance = Math.hypot(def.x - cameraHome.position.x, def.z - cameraHome.position.z);
+        heroVisuals.push({ def, visual: signs[def.id], neon, texture: tex, score: def.w / Math.max(8, distance) });
+      }
+      if (def.kind !== 'rooftop' && def.y < 22) {
+        // A rooftop sign's smear would land inside its own building, so only facade signs get one.
+        const length = THREE.MathUtils.clamp(def.w * .85, 3.5, 11);
+        const geometry = new THREE.PlaneGeometry(def.w * 1.06, length);
+        geometry.translate(0, -length / 2, 0);
+        geometry.rotateX(-Math.PI / 2);
+        const material = ownMaterial(new THREE.ShaderMaterial({
+          uniforms: { map: { value: tex }, opacity: { value: 0 }, time: { value: 0 } },
+          vertexShader: smearVertex,
+          fragmentShader: smearFragment,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }));
+        const smear = new THREE.Mesh(geometry, material);
+        const normal = new THREE.Vector3(Math.sin(def.rotY), 0, Math.cos(def.rotY));
+        smear.position.set(def.x + normal.x * 0.5, 0.30, def.z + normal.z * 0.5);
+        smear.rotation.y = def.rotY;
+        smear.renderOrder = 2;
+        root.add(smear);
+        smears.push({ material, base: .95 });
+      }
     }
   }
 
@@ -371,11 +442,19 @@ export function createScene(ctx: RenderContext): SceneHandle {
       const arm = new THREE.Mesh(new THREE.BoxGeometry(.08, .08, .95), poleMat); arm.position.set(Math.sin(l.armYaw) * .42, l.h - .22, Math.cos(l.armYaw) * .42); arm.rotation.y = l.armYaw; group.add(arm);
       const glow = ownMaterial(new THREE.MeshStandardMaterial({ color: '#22202b', emissive: theme.neon[l.id % 4], emissiveIntensity: 2.5, roughness: .25 }));
       const head = new THREE.Mesh(new THREE.SphereGeometry(.24, 10, 8), glow); head.position.set(Math.sin(l.armYaw) * .86, l.h - .27, Math.cos(l.armYaw) * .86); group.add(head);
-      const cone = ownMaterial(new THREE.MeshBasicMaterial({ color: theme.neon[l.id % 4], transparent: true, opacity: .042, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-      const coneMesh = new THREE.Mesh(new THREE.ConeGeometry(1.05, l.h * .62, 16, 1, true), cone); coneMesh.position.set(Math.sin(l.armYaw) * .86, l.h * .47, Math.cos(l.armYaw) * .86); group.add(coneMesh);
+      const cone = ownMaterial(new THREE.ShaderMaterial({
+        uniforms: { color: { value: new THREE.Color(theme.neon[l.id % 4]) }, strength: { value: 0 } },
+        vertexShader: coneVertex,
+        fragmentShader: coneFragment,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }));
+      const coneMesh = new THREE.Mesh(new THREE.ConeGeometry(0.95, l.h * .5, 16, 1, true), cone); coneMesh.position.set(Math.sin(l.armYaw) * .86, l.h * .47, Math.cos(l.armYaw) * .86); group.add(coneMesh);
       const pool = ownMaterial(new THREE.MeshBasicMaterial({ color: theme.neon[l.id % 4], transparent: true, opacity: .12, blending: THREE.AdditiveBlending, depthWrite: false }));
       const poolMesh = new THREE.Mesh(new THREE.CircleGeometry(1.55, 20), pool); poolMesh.rotation.x = -Math.PI / 2; poolMesh.position.set(Math.sin(l.armYaw) * .86, .035, Math.cos(l.armYaw) * .86); poolMesh.scale.set(1, .65, 1); group.add(poolMesh);
-      addRecolor((p) => { const c = p.neon[l.id % 4]; glow.emissive.set(c); cone.color.set(c); pool.color.set(c); });
+      addRecolor((p) => { const c = p.neon[l.id % 4]; glow.emissive.set(c); cone.uniforms.color.value.set(c); pool.color.set(c); });
       lamps[l.id] = { group, glow, cone, pool, colorIndex: l.id % 4 }; pickables.lamps.push(group);
     }
   }
@@ -443,7 +522,7 @@ export function createScene(ctx: RenderContext): SceneHandle {
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
     const stars = new THREE.PointsMaterial({ color: '#d8e9ff', size: .75, transparent: true, opacity: .8, depthWrite: false }); ownMaterial(stars); skyStars = new THREE.Points(geo, stars); root.add(skyStars);
     const discTexture = canvasTexture(128, 128, (g, w, h) => { const gradient = g.createRadialGradient(w / 2, h / 2, 1, w / 2, h / 2, w / 2); gradient.addColorStop(0, '#fff7cf'); gradient.addColorStop(.42, '#d8c7ff'); gradient.addColorStop(1, 'rgba(175,120,255,0)'); g.fillStyle = gradient; g.fillRect(0, 0, w, h); });
-    const moon = new THREE.Sprite(ownMaterial(new THREE.SpriteMaterial({ map: discTexture, transparent: true, depthWrite: false, color: '#d7c7ff' }))); moon.position.set(-72, 57, -110); moon.scale.set(12, 12, 1); root.add(moon);
+    const moon = new THREE.Sprite(ownMaterial(new THREE.SpriteMaterial({ map: discTexture, transparent: true, depthWrite: false, color: '#d7c7ff' }))); moon.position.set(-72, 57, -110); moon.scale.set(12, 12, 1); moonMaterial = moon.material as THREE.SpriteMaterial; root.add(moon);
   }
 
   function buildSkyline(): void {
@@ -483,7 +562,7 @@ export function createScene(ctx: RenderContext): SceneHandle {
       const mesh = object as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
     });
-    root.clear(); pickables.signs.length = 0; pickables.lamps.length = 0; pickables.water.length = 0; signs.length = 0; lamps.length = 0; signals.length = 0; waterMesh = null; waterTexture = null; waterUniforms = null; skyUniforms = null; skyStars = null; wetUniformsRef = null; key = null; hemi = null; ambient = null;
+    root.clear(); pickables.signs.length = 0; pickables.lamps.length = 0; pickables.water.length = 0; signs.length = 0; lamps.length = 0; signals.length = 0; waterMesh = null; waterTexture = null; waterUniforms = null; skyUniforms = null; skyStars = null; moonMaterial = null; wetUniformsRef = null; smears.length = 0; hoverKind = null; hoverId = -1; heroVisuals.length = 0; key = null; hemi = null; ambient = null;
     for (const material of materials) material.dispose(); for (const texture of textures) texture.dispose(); materials.clear(); textures.clear(); recolors.length = 0;
   }
   function setTheme(next: ThemePalette): void {
@@ -496,18 +575,28 @@ export function createScene(ctx: RenderContext): SceneHandle {
   function update(dt: number, state: AppState, sim: SimBridge): void {
     const env = sim.env; const day = env[ENV.dayFactor] ?? 0; const night = env[ENV.nightFactor] ?? 1; const neon = env[ENV.neonBoost] ?? 1;
     for (const entry of tints) entry.mat.color.copy(entry.night).lerp(entry.day, day); const windowLit = env[ENV.windowLit] ?? night; const wetness = env[ENV.wetness] ?? 0; const precipFog = env[ENV.precipFog] ?? 0;
-    root.traverse((object) => { const material = object.userData.windowMaterial as THREE.MeshStandardMaterial | undefined; if (material) material.emissiveIntensity = windowLit * (object.userData.windowBias as number) * 0.95; });
+    // Below ~0.22 the windows are effectively dark; without this daylight keeps every window lit.
+    const windowGlow = Math.max(0, (windowLit - 0.22) / 0.78);
+    root.traverse((object) => { const material = object.userData.windowMaterial as THREE.MeshStandardMaterial | undefined; if (material) material.emissiveIntensity = windowGlow * (object.userData.windowBias as number) * 0.95; });
     const signData = sim.signs;
-    for (let i = 0; i < signs.length; i++) { const visual = signs[i]; if (!visual) continue; const flash = signData[i * 2] ?? 0; const glitch = signData[i * 2 + 1] ?? 0; const jitter = glitch > .06 ? Math.sin((sim.elapsed * 83 + i * 17)) * glitch * .13 : 0; visual.group.position.set(visual.base.x + jitter, visual.base.y + (glitch > .35 ? Math.cos(sim.elapsed * 51 + i) * .035 : 0), visual.base.z); visual.glow.opacity = (.12 + (flash + glitch * .4) * .55) * (.30 + neon * .70); visual.face.scale.x = glitch > .18 ? 1 + Math.sin(sim.elapsed * 69 + i) * glitch * .08 : 1; (visual.face.material as THREE.MeshBasicMaterial).color.setScalar(.34 + neon * .66); }
+    for (let i = 0; i < signs.length; i++) { const visual = signs[i]; if (!visual) continue; const flash = signData[i * 2] ?? 0; const glitch = signData[i * 2 + 1] ?? 0; const jitter = glitch > .06 ? Math.sin((sim.elapsed * 83 + i * 17)) * glitch * .13 : 0; visual.group.position.set(visual.base.x + jitter, visual.base.y + (glitch > .35 ? Math.cos(sim.elapsed * 51 + i) * .035 : 0), visual.base.z); const highlight = hoverKind === 'sign' && hoverId === i ? 2.1 : 1;
+      // Daylight already lights the boards; keep the neon from blowing out at noon.
+      const signDay = 1 - day * .55;
+      visual.glow.opacity = (.12 + (flash + glitch * .4) * .55) * (.30 + neon * .70) * highlight * signDay; visual.face.scale.x = glitch > .18 ? 1 + Math.sin(sim.elapsed * 69 + i) * glitch * .08 : 1; (visual.face.material as THREE.MeshBasicMaterial).color.setScalar((.34 + neon * .66) * (1 - day * .45)); }
     const lampData = sim.lamps;
-    for (let i = 0; i < lamps.length; i++) { const visual = lamps[i]; if (!visual) continue; const on = lampData[i * 2] ?? 0; const flicker = lampData[i * 2 + 1] ?? 1; const strength = on * (.48 + flicker * .52) * (.25 + night * .75); visual.glow.emissiveIntensity = strength * 5; visual.cone.opacity = strength * .055; visual.pool.opacity = strength * .12; }
+    for (let i = 0; i < lamps.length; i++) { const visual = lamps[i]; if (!visual) continue; const on = lampData[i * 2] ?? 0; const flicker = lampData[i * 2 + 1] ?? 1; const strength = on * (.48 + flicker * .52) * night * (hoverKind === 'lamp' && hoverId === i ? 1.35 : 1); visual.glow.emissiveIntensity = strength * 5; visual.cone.uniforms.strength.value = strength * .036; visual.pool.opacity = strength * .12; }
     const signalData = sim.signals;
     for (let i = 0; i < signals.length; i++) { const visual = signals[i]; if (!visual) continue; for (let j = 0; j < 3; j++) { const v = signalData[i * 3 + j] ?? 0; visual.lenses[j].emissiveIntensity = v * 4; visual.glows[j].opacity = v * .7; } }
     if (waterTexture) { const values = sim.water; const pixels = waterTexture.image.data as Uint8Array; const n = Math.min(values.length, pixels.length); for (let i = 0; i < n; i++) pixels[i] = Math.max(0, Math.min(255, Math.round((values[i] * .5 + .5) * 255))); waterTexture.needsUpdate = true; }
     if (waterUniforms) { waterUniforms.time.value += dt; waterUniforms.wet.value = wetness; }
+    // Neon bleed only exists when the asphalt is wet, it is dark, and reflections are enabled.
+    const smearStrength = state.reflections ? Math.max(wetness, state.rain * .75) * night : 0;
+    for (const smear of smears) { smear.material.uniforms.time.value = sim.elapsed; smear.material.uniforms.opacity.value = smearStrength * smear.base; }
     if (wetUniformsRef) { wetUniformsRef.time.value += dt; wetUniformsRef.wet.value = Math.max(wetness, state.rain * .8) * (.10 + night * .90); }
     if (skyUniforms) skyUniforms.day.value = day;
     if (skyStars && skyStars.material instanceof THREE.PointsMaterial) skyStars.material.opacity = Math.max(0, night * .92 - day * .35);
+    // The moon has no business glowing at noon.
+    if (moonMaterial) moonMaterial.opacity = Math.max(0, 1 - day * 1.9);
     if (key) {
       key.intensity = .25 + day * 1.6;
       key.color.copy(new THREE.Color(theme.keyLight)).lerp(new THREE.Color('#ffe9d0'), day * .85);
@@ -519,5 +608,23 @@ export function createScene(ctx: RenderContext): SceneHandle {
   }
 
   build(layout);
-  return { root, cameraHome, get waterMesh() { return waterMesh; }, pickables, rebuild(next) { clear(); build(next); }, setTheme, update, dispose() { clear(); if (ctx.scene.fog) ctx.scene.fog = null; } };
+  return { root, cameraHome, get waterMesh() { return waterMesh; }, pickables, rebuild(next) { clear(); build(next); }, setTheme, update,
+    setHover(kind, id) { if (kind === hoverKind && id === hoverId) return; hoverKind = kind; hoverId = id; },
+    setHeroText(text) {
+      const next = text.trim();
+      if (next === heroOverride) return;
+      heroOverride = next;
+      let hero = heroVisuals[0];
+      for (const candidate of heroVisuals) if (candidate.score > (hero?.score ?? 0)) hero = candidate;
+      if (!hero) return;
+      const previous = hero.texture;
+      const texture = signTexture(hero.def, hero.neon, heroOverride);
+      hero.texture = texture;
+      const material = hero.visual.face.material as THREE.MeshBasicMaterial;
+      material.map = texture;
+      material.needsUpdate = true;
+      for (const smear of smears) if (smear.material.uniforms.map.value === previous) smear.material.uniforms.map.value = texture;
+      textures.delete(previous);
+      previous.dispose();
+    }, dispose() { clear(); if (ctx.scene.fog) ctx.scene.fog = null; } };
 }

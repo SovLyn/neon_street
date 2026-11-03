@@ -18,6 +18,8 @@ export interface AppState {
   chromatic: boolean;
   grain: boolean;
   reflections: boolean;
+  /** Optional custom text painted onto the landmark sign (max 8 characters). */
+  signText: string;
 }
 
 export const DEFAULT_STATE: AppState = {
@@ -35,6 +37,7 @@ export const DEFAULT_STATE: AppState = {
   chromatic: true,
   grain: true,
   reflections: true,
+  signText: '',
 };
 
 export type Listener = (state: AppState, prev: AppState) => void;

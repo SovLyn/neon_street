@@ -17,6 +17,7 @@ interface NeonDebug {
   frame: number;
   wasmBytes: number;
   layoutSeed: number;
+  layout(): Layout;
   state(): AppState;
   set(patch: Partial<AppState>): void;
   sim(): {
@@ -79,10 +80,10 @@ async function boot(): Promise<void> {
   document.getElementById('app')?.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.5, 800);
+  const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.5, 800);
   // Layer 1 holds reflective surfaces the planar-reflection pass must not see.
   camera.layers.enable(REFLECTION_EXCLUDE_LAYER);
-  camera.position.set(48, 26, 62);
+  camera.position.set(24, 7, 26);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -112,6 +113,7 @@ async function boot(): Promise<void> {
   scene.add(sceneHandle.root);
   scene.add(actors.root);
 
+  sceneHandle.setHeroText(initial.signText);
   const cameraHome = {
     position: sceneHandle.cameraHome.position.clone(),
     target: sceneHandle.cameraHome.target.clone(),
@@ -255,6 +257,122 @@ async function boot(): Promise<void> {
     activate(pick(event.clientX, event.clientY));
   });
 
+  /* ----------------------------------------------------------- hover affordance */
+
+  const hoverLabel = document.createElement('div');
+  hoverLabel.className = 'hover-label';
+  hoverLabel.style.cssText =
+    'position:fixed;z-index:40;pointer-events:none;padding:4px 9px;border-radius:7px;' +
+    'background:rgba(7,4,12,.86);border:1px solid rgba(255,255,255,.16);color:#efeaf7;' +
+    'font:600 11px/1.4 "Segoe UI",system-ui,sans-serif;letter-spacing:.04em;' +
+    'white-space:nowrap;opacity:0;transition:opacity 90ms ease;transform:translate(14px,16px)';
+  document.body.append(hoverLabel);
+
+  function describe(hit: string | null): string | null {
+    if (!hit) return null;
+    const [kind, a] = hit.split(':');
+    if (kind === 'sign') return `招牌 · ${sim.layout().signs[Number(a)]?.text ?? '霓虹'}`;
+    if (kind === 'lamp') return '路灯 · 点击开关';
+    if (kind === 'water') return '水面 · 点击激起涟漪';
+    return null;
+  }
+
+  let hoverX = 0;
+  let hoverY = 0;
+  let hoverAt = 0;
+  let hoverDirty = false;
+  renderer.domElement.addEventListener('pointermove', (event) => {
+    if (event.buttons !== 0) { setHover(null, -1); return; }
+    hoverX = event.clientX;
+    hoverY = event.clientY;
+    hoverDirty = true;
+  });
+  renderer.domElement.addEventListener('pointerleave', () => { hoverDirty = false; setHover(null, -1); });
+
+  function setHover(hit: string | null, x = hoverX, y = hoverY): void {
+    if (!hit) {
+      sceneHandle.setHover(null, -1);
+      renderer.domElement.style.cursor = '';
+      hoverLabel.style.opacity = '0';
+      return;
+    }
+    const [kind, a] = hit.split(':');
+    sceneHandle.setHover(kind === 'sign' || kind === 'lamp' ? kind : null, Number(a));
+    renderer.domElement.style.cursor = 'pointer';
+    hoverLabel.textContent = describe(hit) ?? '';
+    hoverLabel.style.left = `${x}px`;
+    hoverLabel.style.top = `${y}px`;
+    hoverLabel.style.opacity = '1';
+  }
+
+  /* -------------------------------------------------------------- event log */
+
+  const eventLabels: Record<string, string> = {
+    ufo: '不明飞行物掠过天际',
+    cat: '有猫窜过路口',
+    flash: '全街招牌闪了一下',
+    shootingStar: '流星划过夜空',
+  };
+  const seenEvents = new Set<number>();
+  const eventOrder: number[] = [];
+  let eventTimer = 0;
+
+  function pollEvents(dt: number): void {
+    eventTimer += dt;
+    if (eventTimer < 0.3) return;
+    eventTimer = 0;
+    const list = sim.events().events as Array<{ kind?: string; seed?: number }>;
+    for (const event of list) {
+      const seed = event.seed;
+      if (typeof seed !== 'number' || seenEvents.has(seed)) continue;
+      seenEvents.add(seed);
+      eventOrder.push(seed);
+      if (eventOrder.length > 60) {
+        const oldest = eventOrder.shift();
+        if (oldest !== undefined) seenEvents.delete(oldest);
+      }
+      (ui as (UiHandle & { pushEvent?: (text: string) => void }) | null)?.pushEvent?.(
+        eventLabels[event.kind ?? ''] ?? '街区异常',
+      );
+    }
+  }
+
+  /* --------------------------------------------------------- quality watchdog */
+
+  let qualityHold = 4;
+  let qualityWindow = 0;
+  let qualityFrames = 0;
+  let autoDowngrades = 0;
+  let applyingAuto = false;
+
+  function watchQuality(dt: number): void {
+    if (autoDowngrades >= 2) return;
+    const latest = store.get();
+    if (latest.paused || latest.photoMode) return;
+    if (qualityHold > 0) {
+      qualityHold -= dt;
+      return;
+    }
+    qualityWindow += dt;
+    qualityFrames += 1;
+    if (qualityWindow < 4) return;
+    const fps = qualityFrames / qualityWindow;
+    qualityWindow = 0;
+    qualityFrames = 0;
+    if (fps >= 30) return;
+    applyingAuto = true;
+    if (autoDowngrades === 0 && latest.reflections) {
+      store.set({ reflections: false });
+      ui?.toast('帧率偏低 · 已关闭反射');
+    } else if (latest.bloom) {
+      store.set({ bloom: false });
+      ui?.toast('帧率偏低 · 已关闭泛光');
+    }
+    applyingAuto = false;
+    qualityHold = 6;
+    autoDowngrades += 1;
+  }
+
   /* ------------------------------------------------------------------ loop */
 
   document.documentElement.dataset.theme = initial.themeId;
@@ -266,8 +384,16 @@ async function boot(): Promise<void> {
     if (state.seed !== prev.seed && state.seed >>> 0 !== sim.seed) {
       reseed(state.seed);
     }
+    if (state.signText !== prev.signText) {
+      sceneHandle.setHeroText(state.signText);
+    }
     if (state.photoMode !== prev.photoMode) {
       document.body.classList.toggle('photo-mode', state.photoMode);
+    }
+    if (!applyingAuto && (state.bloom !== prev.bloom || state.reflections !== prev.reflections)) {
+      // A manual quality choice always wins over the watchdog.
+      autoDowngrades = 2;
+      qualityHold = 30;
     }
     scheduleUrlSync(state);
   });
@@ -291,6 +417,16 @@ async function boot(): Promise<void> {
       const hours = sim.timeOfDay;
       if (Math.abs(hours - state.timeOfDay) > 0.002) store.set({ timeOfDay: hours });
     }
+
+    if (hoverDirty) {
+      const now = performance.now();
+      if (now - hoverAt > 80) {
+        hoverAt = now;
+        setHover(pick(hoverX, hoverY), hoverX, hoverY);
+      }
+    }
+    pollEvents(dt);
+    watchQuality(dt);
 
     sceneHandle.update(dt, state, sim);
     actors.update(dt, state, sim);
@@ -375,6 +511,7 @@ async function boot(): Promise<void> {
     frame: 0,
     wasmBytes: sim.wasmBytes,
     layoutSeed: sim.layout().seed,
+    layout: () => sim.layout(),
     state: () => store.get(),
     set: (patch) => store.set(patch),
     sim: () => {

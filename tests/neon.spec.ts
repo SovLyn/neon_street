@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 interface NeonState {
   timeOfDay: number;
+  signText?: string;
   rain: number;
   themeId: string;
   autoCycle: boolean;
@@ -117,6 +118,53 @@ test('URL 状态可恢复', async ({ page }) => {
   const params = new URLSearchParams(search);
   expect(params.get('seed')).toBe('42');
   expect(params.get('theme')).toBe('tokyo');
+});
+
+test('关键操作在首屏可点（无需滚动）', async ({ page }) => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 1280, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await gotoApp(page);
+    for (const id of ['btn-reseed', 'btn-share', 'btn-photo', 'btn-event', 'btn-reset-camera']) {
+      const box = await page.locator(`[data-testid="${id}"]`).boundingBox();
+      expect(box, `${id} is missing`).not.toBeNull();
+      expect(box!.y + box!.height, `${id} is below the fold at ${viewport.width}x${viewport.height}`).toBeLessThanOrEqual(viewport.height);
+      expect(box!.y, `${id} starts above the viewport`).toBeGreaterThanOrEqual(0);
+    }
+  }
+});
+
+test('悬停可交互物时有提示', async ({ page }) => {
+  await gotoApp(page, '?auto=0&t=21.4');
+  const point = await page.evaluate(() => {
+    for (let i = 0; i < 24; i += 1) {
+      const spot = window.__neon?.signScreen(i);
+      if (spot && spot.x > 470 && spot.y > 120 && spot.y < window.innerHeight - 120) return spot;
+    }
+    return null;
+  });
+  expect(point).not.toBeNull();
+  await page.mouse.move(point!.x, point!.y);
+  await expect.poll(async () => page.locator('.hover-label').evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+  await expect(page.locator('.hover-label')).toContainText('招牌');
+  await page.mouse.move(4, 4);
+  await expect.poll(async () => page.locator('.hover-label').evaluate((el) => getComputedStyle(el).opacity)).toBe('0');
+});
+
+test('彩蛋会写进事件日志', async ({ page }) => {
+  await gotoApp(page, '?auto=0&t=22');
+  await page.evaluate(() => window.__neon?.triggerEvent());
+  await expect.poll(async () => (await page.locator('[data-testid="event-log"]').textContent()) ?? '').not.toBe('');
+});
+
+test('自定义招牌文字写进 URL', async ({ page }) => {
+  await gotoApp(page, '?auto=0&t=21.4');
+  await page.locator('details.section-block > summary').click();
+  const input = page.locator('[data-testid="sign-input"]');
+  await input.fill('霓虹万岁');
+  await expect.poll(async () => (await state(page)).signText).toBe('霓虹万岁');
+  await expect.poll(async () =>
+    new URLSearchParams(await page.evaluate(() => window.location.search)).get('sign'),
+  ).toBe('霓虹万岁');
 });
 
 test('canvas 有渲染输出', async ({ page }) => {

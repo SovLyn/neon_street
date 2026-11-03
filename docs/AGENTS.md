@@ -12,6 +12,8 @@
 | `ui-hud` | HUD、滑块、主题/预设、URL、摄影模式 | `gpt-5.6-luna` | DOM/交互为主，成本优先 | 完成 |
 | `ui-css` | HUD 样式表 | `gpt-5.6-luna` | 纯样式，机械度高 | 完成，主模型压缩尺寸 |
 | `devops-ci` | CI、Pages 部署、Playwright、README、TODO | `gpt-5.6-luna` | 模板化配置与文档 | 完成 |
+| `layout-hero` | 布局生成：地标大招牌 + 按 seed 抽样招牌词/字体/配色（第二轮趣味性改进） | `gpt-6.1-terra` | 几何推理与确定性约束 | 完成 |
+| `hud-actions` | HUD 重排：底部常驻操作条 + 事件日志（第二轮趣味性改进） | `gpt-5.6-terra` | 结构化布局，需要设计判断 | 完成 |
 
 ## 额度与中断
 

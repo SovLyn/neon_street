@@ -3,6 +3,7 @@ import { PRESETS, THEMES, getTheme } from '../theme/palettes';
 import type { ThemeId } from '../types';
 import type { AppState, Store } from '../state';
 import type { SimBridge } from '../wasm/sim';
+import { sanitizeSignText } from '../url';
 
 export interface UiDeps {
   store: Store;
@@ -19,6 +20,7 @@ export interface UiDeps {
 export interface UiHandle {
   refresh(): void;
   toast(message: string): void;
+  pushEvent(text: string): void;
   dispose(): void;
 }
 
@@ -38,6 +40,10 @@ function formatClock(hours: number): string {
   const hour = Math.floor(totalMinutes / 60);
   const minute = totalMinutes % 60;
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function formatEventTime(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 function timePeriod(hours: number): string {
@@ -129,7 +135,12 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 export function mountUI(deps: UiDeps): UiHandle {
   const hud = document.getElementById('hud');
   if (!hud) {
-    return { refresh: () => undefined, toast: () => undefined, dispose: () => undefined };
+    return {
+      refresh: () => undefined,
+      toast: () => undefined,
+      pushEvent: (_text: string) => undefined,
+      dispose: () => undefined,
+    };
   }
 
   hud.replaceChildren();
@@ -162,6 +173,12 @@ export function mountUI(deps: UiDeps): UiHandle {
   const seedReadout = addText(brandStats, 'span', 'stat-chip', 'SEED —');
   const fpsReadout = addText(brandStats, 'span', 'stat-chip', 'FPS —');
   const clockReadout = addText(brandStats, 'span', 'clock-readout', '21:24');
+  const eventLog = document.createElement('div');
+  eventLog.className = 'event-log';
+  eventLog.dataset.testid = 'event-log';
+  eventLog.setAttribute('role', 'log');
+  eventLog.setAttribute('aria-live', 'polite');
+  brand.append(eventLog);
 
   const dock = document.createElement('section');
   dock.className = 'control-dock glass-panel';
@@ -181,9 +198,12 @@ export function mountUI(deps: UiDeps): UiHandle {
   const pauseButton = addButton(dockMeta, 'icon-button pause-button', 'Ⅱ', '暂停或继续模拟');
   const shortcutHint = addText(dockMeta, 'span', 'shortcut-hint', 'SPACE 暂停 · H 隐藏');
 
+  const dockMiddle = document.createElement('div');
+  dockMiddle.className = 'dock-middle';
+  dock.append(dockMiddle);
   const sections = document.createElement('div');
   sections.className = 'control-sections';
-  dock.append(sections);
+  dockMiddle.append(sections);
 
   const timeSection = addDetails(sections, 'time', '时间', 'TIME');
   const timeLabelRow = document.createElement('div');
@@ -284,17 +304,25 @@ export function mountUI(deps: UiDeps): UiHandle {
   seedInput.setAttribute('aria-label', '街区种子');
   seedField.append(seedInput);
   seedLine.append(seedField);
-  const reseedButton = addButton(seedLine, 'action-button action-primary', '换一条街');
-  reseedButton.dataset.testid = 'btn-reseed';
-  const blockActions = document.createElement('div');
-  blockActions.className = 'action-grid';
-  blockSection.append(blockActions);
-  const shareButton = addButton(blockActions, 'action-button', '分享链接');
-  shareButton.dataset.testid = 'btn-share';
-  const eventButton = addButton(blockActions, 'action-button', '触发异常');
-  eventButton.dataset.testid = 'btn-event';
-  const resetButton = addButton(blockActions, 'action-button', '重置机位');
-  resetButton.dataset.testid = 'btn-reset-camera';
+  const signField = document.createElement('label');
+  signField.className = 'seed-field';
+  addText(signField, 'span', 'field-name', '招牌字');
+  const signInput = document.createElement('input');
+  signInput.type = 'text';
+  signInput.maxLength = 8;
+  signInput.autocomplete = 'off';
+  signInput.spellcheck = false;
+  signInput.placeholder = '最多 8 字';
+  signInput.dataset.testid = 'sign-input';
+  signInput.setAttribute('aria-label', '自定义地标招牌文字');
+  signField.append(signInput);
+  blockSection.append(signField);
+  signInput.addEventListener('input', () => {
+    deps.store.set({ signText: sanitizeSignText(signInput.value) });
+  });
+  for (const field of [seedInput, signInput]) {
+    field.addEventListener('focus', () => field.scrollIntoView({ block: 'nearest' }));
+  }
 
   const qualitySection = addDetails(sections, 'quality', '画质', 'FX');
   const qualityGrid = document.createElement('div');
@@ -325,8 +353,24 @@ export function mountUI(deps: UiDeps): UiHandle {
     toggleInputs.set(key, input);
   }
 
-  const photoButton = addButton(dock, 'photo-button', '进入摄影模式', '进入摄影模式');
+  const actionBar = document.createElement('div');
+  actionBar.className = 'dock-actions';
+  dock.append(actionBar);
+  const reseedButton = addButton(actionBar, 'action-button action-primary', '换街', '换一条街');
+  reseedButton.dataset.testid = 'btn-reseed';
+  reseedButton.title = '换一条街';
+  const shareButton = addButton(actionBar, 'action-button', '分享', '分享链接');
+  shareButton.dataset.testid = 'btn-share';
+  shareButton.title = '分享链接';
+  const photoButton = addButton(actionBar, 'action-button action-photo photo-button', '摄影', '进入摄影模式');
   photoButton.dataset.testid = 'btn-photo';
+  photoButton.title = '进入摄影模式';
+  const eventButton = addButton(actionBar, 'action-button', '异常', '触发异常');
+  eventButton.dataset.testid = 'btn-event';
+  eventButton.title = '触发异常';
+  const resetButton = addButton(actionBar, 'action-button', '机位', '重置机位');
+  resetButton.dataset.testid = 'btn-reset-camera';
+  resetButton.title = '重置机位';
 
   const toastStack = document.createElement('div');
   toastStack.className = 'toast-stack';
@@ -382,6 +426,7 @@ export function mountUI(deps: UiDeps): UiHandle {
     const state = deps.store.get();
     seedReadout.textContent = `SEED ${state.seed >>> 0}`;
     if (!active(seedInput)) seedInput.value = String(state.seed >>> 0);
+    if (!active(signInput)) signInput.value = state.signText;
     autoToggle.checked = state.autoCycle;
     speedRange.value = String(state.autoCycleSpeed);
     speedValue.textContent = `${state.autoCycleSpeed.toFixed(2)}×`;
@@ -439,6 +484,17 @@ export function mountUI(deps: UiDeps): UiHandle {
     toastStack.prepend(item);
     while (toastStack.children.length > 3) toastStack.lastElementChild?.remove();
     window.setTimeout(() => item.remove(), 2400);
+  };
+
+  const pushEvent = (text: string): void => {
+    const timestamp = new Date();
+    const item = document.createElement('div');
+    item.className = 'event-log-line';
+    const stamp = addText(item, 'time', 'event-log-time', formatEventTime(timestamp));
+    stamp.setAttribute('datetime', timestamp.toISOString());
+    addText(item, 'span', 'event-log-text', text);
+    eventLog.prepend(item);
+    while (eventLog.children.length > 3) eventLog.lastElementChild?.remove();
   };
 
   on(timeRange, 'pointerdown', () => {
@@ -580,6 +636,7 @@ export function mountUI(deps: UiDeps): UiHandle {
   return {
     refresh,
     toast,
+    pushEvent,
     dispose() {
       if (disposed) return;
       disposed = true;

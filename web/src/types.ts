@@ -96,6 +96,8 @@ export interface SignDef {
   colorIndex: number;
   font: SignFont;
   buildingId: number;
+  /** Large, hand-placed landmark sign — rendered at higher texture resolution. */
+  hero?: boolean;
 }
 
 export interface LampDef {

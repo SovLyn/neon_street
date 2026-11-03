@@ -27,8 +27,7 @@
 
 .neon-brand,
 .control-dock,
-.toast-stack,
-.photo-overlay {
+.toast-stack {
   pointer-events: auto;
 }
 
@@ -142,20 +141,54 @@
   font-weight: 700;
 }
 
+.event-log {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+
+.event-log:empty { display: none; }
+
+.event-log-line {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+  color: #aaa3b5;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.event-log-time {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--accent-2) 67%, #ddd 33%);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .05em;
+}
+
+.event-log-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ------------------------------------------------------------------ dock */
 .control-dock {
   position: absolute;
   bottom: 24px;
   left: 28px;
+  display: flex;
+  box-sizing: border-box;
   width: min(406px, calc(100vw - 56px));
-  max-height: min(72vh, 620px);
+  height: min(62vh, 560px);
+  max-height: 62vh;
+  flex-direction: column;
   padding: 14px;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 45%, transparent) transparent;
+  overflow: hidden;
 }
 
 .dock-head {
+  flex: 0 0 auto;
   justify-content: space-between;
   gap: 16px;
   padding: 2px 3px 12px;
@@ -230,6 +263,24 @@ summary:focus-visible {
   color: var(--accent-2);
   font-weight: 800;
   line-height: 1;
+}
+
+.dock-middle {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 68%, transparent) rgba(255,255,255,.04);
+}
+
+.dock-middle::-webkit-scrollbar { width: 8px; }
+.dock-middle::-webkit-scrollbar-track { background: rgba(255,255,255,.04); border-radius: 99px; }
+.dock-middle::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(5,3,10,.72);
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--accent) 68%, #776f85 32%);
 }
 
 .control-sections {
@@ -378,8 +429,22 @@ input[type='range']::-moz-range-thumb {
 }
 .action-button { min-height: 29px; padding: 0 10px; border-radius: 6px; font-size: 11px; white-space: nowrap; }
 .action-primary { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: color-mix(in srgb, var(--accent) 76%, #fff 24%); }
-.action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding-bottom: 11px; }
-.action-grid .action-button { padding: 0 5px; }
+.dock-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  flex: 0 0 auto;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.dock-actions .action-button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 1.2;
+}
 
 .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .quality-toggle { display: flex; min-height: 39px; align-items: center; gap: 8px; padding: 6px 7px; border: 1px solid rgba(255,255,255,.08); border-radius: 7px; cursor: pointer; }
@@ -391,7 +456,11 @@ input[type='range']::-moz-range-thumb {
 .quality-copy { min-width: 0; }
 .quality-name { display: block; color: #c6bfce; font-size: 11px; font-weight: 600; }
 .quality-short { display: block; margin-top: 2px; color: #777083; font-size: 8px; letter-spacing: .11em; }
-.photo-button { display: block; width: 100%; margin-top: 10px; padding: 9px 12px; border-color: color-mix(in srgb, var(--accent) 48%, transparent); border-radius: 8px; color: color-mix(in srgb, var(--accent) 73%, #fff 27%); letter-spacing: .1em; }
+.dock-actions .photo-button {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  color: color-mix(in srgb, var(--accent) 73%, #fff 27%);
+  letter-spacing: .06em;
+}
 
 /* ------------------------------------------------------------------ photo mode / messages */
 .photo-overlay { position: absolute; inset: 0; display: none; pointer-events: none; }
@@ -416,7 +485,7 @@ input[type='range']::-moz-range-thumb {
 
 @media (max-width: 700px) {
   .neon-brand { top: 14px; left: 14px; width: calc(100vw - 28px); }
-  .control-dock { right: 14px; bottom: 14px; left: 14px; width: auto; max-height: 54vh; }
+  .control-dock { right: 14px; bottom: 14px; left: 14px; width: auto; height: min(54vh, 560px); max-height: 54vh; }
   .toast-stack { right: 14px; bottom: 14px; width: min(300px, calc(100vw - 28px)); }
   .shortcut-hint { display: none; }
 }
