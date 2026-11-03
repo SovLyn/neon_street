@@ -102,7 +102,7 @@ function addRange(
 function addDetails(parent: Element, key: string, title: string, detail?: string): HTMLElement {
   const details = document.createElement('details');
   details.className = `control-section section-${key}`;
-  details.open = key === 'time' || key === 'weather' || key === 'theme' || key === 'preset';
+  details.open = key === 'time' || key === 'weather' || key === 'theme';
   const summary = document.createElement('summary');
   summary.className = 'section-summary';
   const summaryTitle = addText(summary, 'span', 'section-title', title);
@@ -237,7 +237,7 @@ export function mountUI(deps: UiDeps): UiHandle {
   themeSection.append(themeGrid);
   const themeButtons = new Map<ThemeId, HTMLButtonElement>();
   for (const theme of Object.values(THEMES)) {
-    const button = addButton(themeGrid, 'theme-swatch', theme.nameZh, `切换配色：${theme.nameZh}`);
+    const button = addButton(themeGrid, 'theme-swatch', '', `切换配色：${theme.nameZh}`);
     button.dataset.themeId = theme.id;
     button.style.setProperty('--swatch-a', theme.neon[0]);
     button.style.setProperty('--swatch-b', theme.neon[1]);
@@ -250,7 +250,8 @@ export function mountUI(deps: UiDeps): UiHandle {
       dot.style.setProperty('--dot-color', theme.neon[index]);
       dots.append(dot);
     }
-    button.prepend(dots);
+    button.append(dots);
+    addText(button, 'span', 'swatch-name', theme.nameZh);
     addText(button, 'span', 'swatch-name-en', theme.name);
     themeButtons.set(theme.id, button);
   }

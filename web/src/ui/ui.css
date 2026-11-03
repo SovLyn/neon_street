@@ -239,6 +239,14 @@ summary:focus-visible {
   padding-top: 10px;
 }
 
+.section-time,
+.section-weather,
+.section-theme,
+.section-preset {
+  /* Time/weather/theme/presets are primary controls: give them the full dock width. */
+  grid-column: 1 / -1;
+}
+
 .control-section {
   min-width: 0;
   border: 1px solid rgba(255,255,255,.075);
@@ -354,6 +362,7 @@ input[type='range']::-moz-range-thumb {
 .theme-swatch.is-selected { border-color: var(--accent); box-shadow: 0 0 13px color-mix(in srgb, var(--accent) 28%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
 .swatch-dots { display: flex; gap: 3px; }
 .swatch-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-color); box-shadow: 0 0 7px var(--dot-color); }
+.swatch-name { white-space: nowrap; font-size: 11px; letter-spacing: .02em; }
 .swatch-name-en { display: none; }
 .preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .preset-button { min-height: 30px; border-radius: 7px; color: #e0dbe7; font-size: 11px; overflow: hidden; }
