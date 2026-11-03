@@ -43,10 +43,7 @@ body {
   z-index: 10;
 }
 
-#hud > * {
-  pointer-events: auto;
-}
-
+/* Individual HUD panels opt into pointer events; the shell stays transparent to clicks. */
 /* Photo mode hides the chrome but keeps the capture tools reachable: #hud is a
    full-viewport layer, so hiding it wholesale would also hide the tool cluster. */
 body.photo-mode .neon-brand,

@@ -88,6 +88,25 @@ const waterAfter = await page.evaluate(() => window.__neon.sim().waterSum);
 check('click: water ripple', waterAfter > waterBefore, `${waterBefore.toFixed(1)} -> ${waterAfter.toFixed(1)}`);
 await shot('06-ripple');
 
+// real mouse click on a projected neon sign (pointerdown/up path, not the debug shortcut)
+const signPoint = await page.evaluate(() => {
+  for (let i = 0; i < 8; i += 1) {
+    const p = window.__neon.signScreen(i);
+    if (p && p.x > 320 && p.x < window.innerWidth - 20 && p.y > 40 && p.y < window.innerHeight - 40) return p;
+  }
+  return null;
+});
+if (signPoint) {
+  const before = await page.evaluate(() => window.__neon.sim().signFlashSum);
+  await page.mouse.click(signPoint.x, signPoint.y);
+  await page.waitForTimeout(250);
+  const after = await page.evaluate(() => window.__neon.sim().signFlashSum);
+  const toast = await page.locator('[data-testid="toast"]').textContent();
+  check('click: real pointer hits a sign', after > before + 0.1, `${before.toFixed(2)} -> ${after.toFixed(2)} toast="${toast}"`);
+} else {
+  check('click: real pointer hits a sign', false, 'no sign on screen');
+}
+
 // pointer picking through the real canvas
 const picked = await page.evaluate(() => {
   const neon = window.__neon;
