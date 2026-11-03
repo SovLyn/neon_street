@@ -337,7 +337,8 @@ export function mountUI(deps: UiDeps): UiHandle {
   const photoOverlay = document.createElement('div');
   photoOverlay.className = 'photo-overlay';
   photoOverlay.setAttribute('aria-label', '摄影模式');
-  hud.append(photoOverlay);
+  // Must live inside .neon-ui: the photo-mode CSS rules are scoped to it.
+  root.append(photoOverlay);
   const photoFrame = document.createElement('div');
   photoFrame.className = 'photo-frame';
   photoOverlay.append(photoFrame);

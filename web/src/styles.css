@@ -47,14 +47,13 @@ body {
   pointer-events: auto;
 }
 
-body.photo-mode #hud {
+/* Photo mode hides the chrome but keeps the capture tools reachable: #hud is a
+   full-viewport layer, so hiding it wholesale would also hide the tool cluster. */
+body.photo-mode .neon-brand,
+body.photo-mode .control-dock {
   opacity: 0;
+  pointer-events: none;
   transition: opacity 400ms ease;
-}
-
-body.photo-mode #hud:hover,
-body.photo-mode #hud:focus-within {
-  opacity: 1;
 }
 
 /* ------------------------------------------------------------------ boot */

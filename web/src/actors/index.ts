@@ -101,6 +101,11 @@ export function createActors(ctx: RenderContext): ActorsHandle {
   shootingStar.visible = false;
   root.add(ufo, cat, shootingStar);
 
+  /** instanceColor exists only after the first setColorAt call. */
+  function touchColor(mesh: THREE.InstancedMesh): void {
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+
   function compose(x: number, y: number, z: number, yaw: number, sx: number, sy: number, sz: number): THREE.Matrix4 {
     position.set(x, y, z); rotation.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, yaw); scale.set(sx, sy, sz);
     return matrix.compose(position, rotation, scale);
@@ -175,7 +180,7 @@ export function createActors(ctx: RenderContext): ActorsHandle {
         used += 1;
       }
       set.body.count = used; set.cabin.count = used; set.wheels.count = wheelUsed;
-      set.body.instanceMatrix.needsUpdate = true; set.body.instanceColor!.needsUpdate = true; set.cabin.instanceMatrix.needsUpdate = true; set.wheels.instanceMatrix.needsUpdate = true;
+      set.body.instanceMatrix.needsUpdate = true; touchColor(set.body); set.cabin.instanceMatrix.needsUpdate = true; set.wheels.instanceMatrix.needsUpdate = true;
     }
     let lightsUsed = 0; let trailsUsed = 0;
     for (let i = 0; i < lightCount; i += 1) {
@@ -201,8 +206,8 @@ export function createActors(ctx: RenderContext): ActorsHandle {
       }
       previous[i * 3] = x; previous[i * 3 + 1] = y; previous[i * 3 + 2] = z;
     }
-    carLights.count = lightsUsed; carLights.instanceMatrix.needsUpdate = true; carLights.instanceColor!.needsUpdate = true;
-    trails.count = trailsUsed; trails.instanceMatrix.needsUpdate = true; trails.instanceColor!.needsUpdate = true;
+    carLights.count = lightsUsed; carLights.instanceMatrix.needsUpdate = true; touchColor(carLights);
+    trails.count = trailsUsed; trails.instanceMatrix.needsUpdate = true; touchColor(trails);
   }
 
   let statePaused = false;
@@ -223,7 +228,7 @@ export function createActors(ctx: RenderContext): ActorsHandle {
       used += 1;
     }
     pedBodies.count = used; pedHeads.count = used; umbrellas.count = umbrellaUsed;
-    pedBodies.instanceMatrix.needsUpdate = true; pedHeads.instanceMatrix.needsUpdate = true; umbrellas.instanceMatrix.needsUpdate = true; if (umbrellaUsed) umbrellas.instanceColor!.needsUpdate = true;
+    pedBodies.instanceMatrix.needsUpdate = true; pedHeads.instanceMatrix.needsUpdate = true; umbrellas.instanceMatrix.needsUpdate = true; if (umbrellaUsed) touchColor(umbrellas);
   }
 
   function updateEvents(events: SimEvent[]): void {

@@ -6,7 +6,13 @@
 
 [打开 GitHub Pages](https://sovlyn.github.io/neon_street/)
 
-> 截图占位：此处放置主街夜景截图（建议包含路口、运河、霓虹招牌和雨面反光）。
+![霓虹街区夜景](docs/screenshot-night.jpg)
+
+<sub>雨夜 · 合成波主题：路口信号灯、霓虹招牌、湿路面与运河倒影。</sub>
+
+![霓虹街区白天](docs/screenshot-day.jpg)
+
+<sub>正午 · 雨后：同一街区的昼夜联动效果。</sub>
 
 ## 技术栈
 

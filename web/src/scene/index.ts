@@ -48,6 +48,26 @@ void main(){
   gl_FragColor=vec4(c,.97);
 }`;
 
+const wetVertex = `varying vec4 vReflect; varying vec3 vWorld; varying vec2 vUv; uniform mat4 textureMatrix;
+void main(){ vUv=uv; vec4 wp=modelMatrix*vec4(position,1.); vWorld=wp.xyz; vReflect=textureMatrix*wp; gl_Position=projectionMatrix*viewMatrix*wp; }`;
+const wetFragment = `uniform sampler2D reflectionMap; uniform vec3 tint; uniform float wet; uniform float time;
+varying vec4 vReflect; varying vec3 vWorld; varying vec2 vUv;
+float hash(vec2 p){ return fract(sin(dot(p,vec2(41.7,289.3)))*43758.5453); }
+float noise(vec2 p){ vec2 i=floor(p); vec2 f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y); }
+void main(){
+  float n=noise(vWorld.xz*.28)*.6+noise(vWorld.xz*.9)*.4;
+  float puddle=smoothstep(.46,.72,n);
+  vec3 V=normalize(cameraPosition-vWorld);
+  float grazing=pow(1.-clamp(V.y,0.,1.),3.2);
+  vec2 ripple=vec2(sin(vWorld.z*1.6+time*.8),cos(vWorld.x*1.5-time*.7))*.0016;
+  vec2 uvR=clamp(vReflect.xy/max(vReflect.w,.001)+ripple,.002,.998);
+  vec3 refl=texture2D(reflectionMap,uvR).rgb;
+  vec3 c=refl*(tint*1.5+.75);
+  float a=puddle*(.10+grazing*.62)*wet;
+  gl_FragColor=vec4(c,a);
+}`;
+
 /** Static, low-poly city block. Dynamic simulation data only changes uniforms/materials. */
 export function createScene(ctx: RenderContext): SceneHandle {
   const root = new THREE.Group();
@@ -57,6 +77,13 @@ export function createScene(ctx: RenderContext): SceneHandle {
   const materials = new Set<THREE.Material>();
   const textures = new Set<THREE.Texture>();
   const signs: SignVisual[] = [];
+  const tints: { mat: THREE.MeshStandardMaterial; night: THREE.Color; day: THREE.Color }[] = [];
+  const WHITE = new THREE.Color('#ffffff');
+  const addTint = (mat: THREE.MeshStandardMaterial, night: THREE.Color, day: THREE.Color): { mat: THREE.MeshStandardMaterial; night: THREE.Color; day: THREE.Color } => {
+    const entry = { mat, night: night.clone(), day: day.clone() };
+    tints.push(entry);
+    return entry;
+  };
   const lamps: LampVisual[] = [];
   const signals: SignalVisual[] = [];
   let theme = ctx.theme;
@@ -64,6 +91,7 @@ export function createScene(ctx: RenderContext): SceneHandle {
   let waterMesh: THREE.Mesh | null = null;
   let waterTexture: THREE.DataTexture | null = null;
   let waterUniforms: { time: { value: number }; wet: { value: number }; deep: { value: THREE.Color }; tint: { value: THREE.Color } } | null = null;
+  let wetUniformsRef: { wet: { value: number }; time: { value: number } } | null = null;
   let skyUniforms: { top: { value: THREE.Color }; horizon: { value: THREE.Color }; bottom: { value: THREE.Color }; day: { value: number } } | null = null;
   let skyStars: THREE.Points | null = null;
   let key: THREE.DirectionalLight | null = null;
@@ -71,7 +99,7 @@ export function createScene(ctx: RenderContext): SceneHandle {
   let ambient: THREE.AmbientLight | null = null;
   const tmpColor = new THREE.Color();
   // From the east quay: the canal occupies the foreground while the intersection recedes between buildings.
-  const cameraHome = { position: new THREE.Vector3(44, 9, 46), target: new THREE.Vector3(-1, 7.5, -2) };
+  const cameraHome = { position: new THREE.Vector3(40, 9.5, 42), target: new THREE.Vector3(-2, 7.5, -4) };
 
   const ownMaterial = <T extends THREE.Material>(material: T): T => { materials.add(material); return material; };
   const ownTexture = <T extends THREE.Texture>(texture: T): T => { textures.add(texture); return texture; };
@@ -96,13 +124,15 @@ export function createScene(ctx: RenderContext): SceneHandle {
 
   function buildGround(): void {
     const asphalt = standard(theme.asphalt, .69, .18);
-    asphalt.emissive.set(theme.ground); asphalt.emissiveIntensity = .08;
+    const asphaltTint = addTint(asphalt, new THREE.Color(theme.asphalt), new THREE.Color(theme.asphalt).lerp(WHITE, .22));
     const sidewalk = standard(theme.sidewalk, .86, .04);
+    const sidewalkTint = addTint(sidewalk, new THREE.Color(theme.sidewalk), new THREE.Color(theme.sidewalk).lerp(WHITE, .32));
+    asphalt.emissive.set(theme.ground); asphalt.emissiveIntensity = .08;
     sidewalk.emissive.set(theme.ground); sidewalk.emissiveIntensity = .05;
     const curb = standard(theme.buildingTrim, .65, .08);
     const paint = ownMaterial(new THREE.MeshStandardMaterial({ color: '#d7d1c2', roughness: .55, metalness: .1, emissive: '#423e37', emissiveIntensity: .15 }));
     const wet = ownMaterial(new THREE.MeshBasicMaterial({ color: theme.accent2, transparent: true, opacity: .035, blending: THREE.AdditiveBlending, depthWrite: false }));
-    addRecolor((p) => { asphalt.color.set(p.asphalt); asphalt.emissive.set(p.ground); sidewalk.color.set(p.sidewalk); sidewalk.emissive.set(p.ground); curb.color.set(p.buildingTrim); wet.color.set(p.accent2); });
+    addRecolor((p) => { asphaltTint.night.set(p.asphalt); asphaltTint.day.copy(asphaltTint.night).lerp(WHITE, .22); asphalt.color.copy(asphaltTint.night); asphalt.emissive.set(p.ground); sidewalkTint.night.set(p.sidewalk); sidewalkTint.day.copy(sidewalkTint.night).lerp(WHITE, .32); sidewalk.color.copy(sidewalkTint.night); sidewalk.emissive.set(p.ground); curb.color.set(p.buildingTrim); wet.color.set(p.accent2); });
     // Main road and crossing road, leaving their overlap intentionally shared for a broad intersection.
     box(20, .08, 144, asphalt, 0, -.04, 0);
     box(144, .081, 16, asphalt, 0, -.039, 0);
@@ -134,79 +164,133 @@ export function createScene(ctx: RenderContext): SceneHandle {
     for (const [x, z, sx, sz] of [[-7, 31, 5, 13], [7, -37, 4, 10], [-33, 7, 12, 3], [33, -6, 15, 3]]) {
       const puddle = new THREE.Mesh(new THREE.CircleGeometry(1, 18), wet); puddle.rotation.x = -Math.PI / 2; puddle.scale.set(sx, sz, 1); puddle.position.set(x, .025, z); root.add(puddle);
     }
+    const wetUniforms = { reflectionMap: { value: ctx.reflection.texture }, textureMatrix: { value: ctx.reflection.textureMatrix }, tint: { value: color(theme.water) }, wet: { value: .4 }, time: { value: 0 } };
+    const wetMat = ownMaterial(new THREE.ShaderMaterial({ uniforms: wetUniforms, vertexShader: wetVertex, fragmentShader: wetFragment, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    for (const [w, d, x, z] of [[20, 144, 0, 0], [144, 16, 0, 0]] as const) {
+      const sheet = new THREE.Mesh(new THREE.PlaneGeometry(w, d), wetMat);
+      sheet.rotation.x = -Math.PI / 2; sheet.position.set(x, .028, z); sheet.layers.set(1); sheet.renderOrder = 1;
+      root.add(sheet);
+    }
+    wetUniformsRef = wetUniforms;
+    addRecolor((p) => wetUniforms.tint.value.set(p.water));
+
     const iron = standard('#151820', .42, .82);
     for (const [x, z] of [[-9, 20], [9, -27], [-25, -9], [31, 9]]) {
       const manhole = new THREE.Mesh(new THREE.CylinderGeometry(.72, .72, .025, 16), iron); manhole.position.set(x, .025, z); root.add(manhole);
     }
   }
 
-  function windowTexture(building: BuildingDef, side: number): THREE.CanvasTexture {
-    const seed = building.windows.seed + side * 193;
-    const wall = new THREE.Color(theme.buildingBase).multiplyScalar(1.18).getStyle();
-    return canvasTexture(256, 512, (g, w, h) => {
-      // Paint the facade so unlit windows read as concrete rather than as glow.
-      g.fillStyle = wall; g.fillRect(0, 0, w, h);
-      g.fillStyle = 'rgba(0,0,0,.28)';
+  function makeFacadeTextures(building: BuildingDef): { albedo: THREE.CanvasTexture; emissive: THREE.CanvasTexture } {
+    const seed = building.windows.seed;
+    const cols = Math.max(3, Math.min(14, Math.floor(building.w / 1.55)));
+    const rows = Math.max(5, Math.min(26, Math.floor(building.h / 1.9)));
+    const rand = (n: number): number => {
+      const v = Math.sin((seed + n * 31.17) * 12.9898) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    const lit: boolean[] = [];
+    const warm: boolean[] = [];
+    const shade: number[] = [];
+    for (let i = 0; i < cols * rows; i += 1) {
+      lit.push(rand(i) < 0.5);
+      warm.push(rand(1000 + i) > 0.36);
+      shade.push(0.18 + rand(2000 + i) * 0.62);
+    }
+    const shops = 3 + Math.floor(building.id % 3);
+    const shopWarm: boolean[] = [];
+    const shopShade: number[] = [];
+    for (let i = 0; i < shops; i += 1) {
+      shopWarm.push((i + building.id) % 2 === 0);
+      shopShade.push(0.5 + rand(4000 + i) * 0.5);
+    }
+    const padX = 0.26;
+    const padY = 0.3;
+
+    // Albedo: concrete façade, dark glass panes. No light is baked in.
+    const albedo = canvasTexture(256, 512, (g, w, h) => {
+      g.fillStyle = '#7c7a88'; g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(0,0,0,.18)';
       for (let i = 0; i < 26; i += 1) g.fillRect(0, (i / 26) * h, w, 1.5);
-      const cols = Math.max(3, Math.min(14, Math.floor(building.w / 1.55)));
-      const rows = Math.max(5, Math.min(26, Math.floor(building.h / 1.9)));
-      const rand = (n: number): number => { const v = Math.sin((seed + n * 31.17) * 12.9898) * 43758.5453; return v - Math.floor(v); };
       const cw = w / cols; const ch = h / rows;
       for (let y = 0; y < rows; y += 1) for (let x = 0; x < cols; x += 1) {
-        const r = rand(x + y * cols);
-        const warm = rand(1000 + x + y * cols) > 0.34;
-        const lit = r < 0.54;
-        const b = 0.18 + rand(2000 + x + y * cols) * 0.5;
-        if (lit) {
-          // near-white core, tinted edge: keeps the city warm without candy colors
-          g.fillStyle = warm
-            ? `rgb(${Math.round(235 * b + 30)},${Math.round(190 * b + 26)},${Math.round(120 * b + 18)})`
-            : `rgb(${Math.round(150 * b + 20)},${Math.round(205 * b + 28)},${Math.round(235 * b + 30)})`;
-        } else {
-          g.fillStyle = `rgb(${10 + Math.round(b * 16)},${12 + Math.round(b * 18)},${18 + Math.round(b * 22)})`;
-        }
-        const padX = cw * 0.26; const padY = ch * 0.3;
-        g.fillRect(x * cw + padX, y * ch + padY, cw - padX * 2, ch - padY * 2);
-        if (lit) {
-          g.fillStyle = 'rgba(255,255,255,.14)';
-          g.fillRect(x * cw + padX, y * ch + padY, cw - padX * 2, ch * 0.12);
-        }
+        g.fillStyle = '#101218';
+        g.fillRect(x * cw + cw * padX, y * ch + ch * padY, cw * (1 - padX * 2), ch * (1 - padY * 2));
       }
-      // vertical mullions
-      g.fillStyle = 'rgba(0,0,0,.35)';
+      g.fillStyle = 'rgba(0,0,0,.30)';
       for (let x = 0; x <= cols; x += 1) g.fillRect(x * cw - 1, 0, 2, h);
-      // street-level storefronts: warm pools of light that sell the block at eye level
       const baseY = h * 0.855;
-      g.fillStyle = '#08080c'; g.fillRect(0, baseY, w, h - baseY);
-      const shops = 3 + Math.floor(building.id % 3);
+      g.fillStyle = '#0e0e13'; g.fillRect(0, baseY, w, h - baseY);
       for (let i = 0; i < shops; i += 1) {
-        const sx = (i + 0.06) * (w / shops);
-        const sw = (w / shops) * 0.88;
-        const warm = (i + building.id) % 2 === 0;
-        const shade = 0.5 + rand(4000 + i + side * 7) * 0.5;
-        g.fillStyle = warm
-          ? `rgb(${Math.round(255 * shade)},${Math.round(186 * shade)},${Math.round(96 * shade)})`
-          : `rgb(${Math.round(120 * shade)},${Math.round(228 * shade)},${Math.round(255 * shade)})`;
+        const sx = (i + 0.06) * (w / shops); const sw = (w / shops) * 0.88;
+        g.fillStyle = '#1a1a22';
         g.fillRect(sx, baseY + 5, sw, (h - baseY) * 0.52);
-        g.fillStyle = 'rgba(0,0,0,.55)';
+      }
+    });
+
+    // Emissive: only the lit panes, storefronts and window highlights.
+    const emissive = canvasTexture(256, 512, (g, w, h) => {
+      g.fillStyle = '#000000'; g.fillRect(0, 0, w, h);
+      const cw = w / cols; const ch = h / rows;
+      for (let y = 0; y < rows; y += 1) for (let x = 0; x < cols; x += 1) {
+        const i = x + y * cols;
+        if (!lit[i]) continue;
+        const b = shade[i];
+        g.fillStyle = warm[i]
+          ? `rgb(${Math.round(240 * b + 15)},${Math.round(198 * b + 20)},${Math.round(128 * b + 16)})`
+          : `rgb(${Math.round(140 * b + 14)},${Math.round(206 * b + 24)},${Math.round(240 * b + 15)})`;
+        g.fillRect(x * cw + cw * padX, y * ch + ch * padY, cw * (1 - padX * 2), ch * (1 - padY * 2));
+        g.fillStyle = 'rgba(255,255,255,.16)';
+        g.fillRect(x * cw + cw * padX, y * ch + ch * padY, cw * (1 - padX * 2), ch * 0.12);
+      }
+      const baseY = h * 0.855;
+      for (let i = 0; i < shops; i += 1) {
+        const sx = (i + 0.06) * (w / shops); const sw = (w / shops) * 0.88;
+        const sh = shopShade[i];
+        g.fillStyle = shopWarm[i]
+          ? `rgb(${Math.round(255 * sh)},${Math.round(186 * sh)},${Math.round(96 * sh)})`
+          : `rgb(${Math.round(120 * sh)},${Math.round(228 * sh)},${Math.round(255 * sh)})`;
+        g.fillRect(sx, baseY + 5, sw, (h - baseY) * 0.52);
+        g.fillStyle = '#000000';
         g.fillRect(sx + sw * 0.45, baseY + 5, sw * 0.1, (h - baseY) * 0.52);
       }
-      g.fillStyle = 'rgba(255,255,255,.10)'; g.fillRect(0, baseY, w, 2);
     });
+
+    return { albedo, emissive };
   }
 
   function addFacadeWindows(b: BuildingDef, body: THREE.Group): void {
-    const make = (w: number, h: number, texture: THREE.Texture, px: number, pz: number, yaw: number): void => {
-      const mat = ownMaterial(new THREE.MeshStandardMaterial({ map: texture, emissiveMap: texture, emissive: '#ffffff', emissiveIntensity: 0, roughness: .62, metalness: .08 }));
-      addRecolor((p) => mat.emissive.set(p.windowWarm));
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * .92, h * .92), mat); mesh.position.set(px, b.h * .5, pz); mesh.rotation.y = yaw; body.add(mesh);
-      // Material's emissive intensity is annotated rather than allocating a closure per frame.
-      mesh.userData.windowMaterial = mat; mesh.userData.windowBias = b.windows.lit;
+    const { albedo, emissive } = makeFacadeTextures(b);
+    const mat = ownMaterial(new THREE.MeshStandardMaterial({
+      map: albedo,
+      emissiveMap: emissive,
+      emissive: '#ffffff',
+      emissiveIntensity: 0,
+      roughness: .72,
+      metalness: .06,
+    }));
+    const facadeTint = addTint(
+      mat,
+      new THREE.Color(theme.buildingBase).multiplyScalar(1.35),
+      new THREE.Color(theme.buildingBase).lerp(WHITE, .46),
+    );
+    // Material's emissive intensity is updated per frame rather than allocating a closure.
+    const make = (w: number, h: number, px: number, pz: number, yaw: number): void => {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * .94, h * .94), mat);
+      mesh.position.set(px, b.h * .5, pz);
+      mesh.rotation.y = yaw;
+      body.add(mesh);
+      mesh.userData.windowMaterial = mat;
+      mesh.userData.windowBias = b.windows.lit;
     };
-    make(b.w, b.h, windowTexture(b, 0), 0, b.d / 2 + .012, 0);
-    make(b.w, b.h, windowTexture(b, 1), 0, -b.d / 2 - .012, Math.PI);
-    make(b.d, b.h, windowTexture(b, 2), b.w / 2 + .012, 0, Math.PI / 2);
-    make(b.d, b.h, windowTexture(b, 3), -b.w / 2 - .012, 0, -Math.PI / 2);
+    make(b.w, b.h, 0, b.d / 2 + .012, 0);
+    make(b.w, b.h, 0, -b.d / 2 - .012, Math.PI);
+    make(b.d, b.h, b.w / 2 + .012, 0, Math.PI / 2);
+    make(b.d, b.h, -b.w / 2 - .012, 0, -Math.PI / 2);
+    addRecolor((p) => {
+      mat.emissive.set('#ffffff');
+      facadeTint.night.copy(new THREE.Color(p.buildingBase)).multiplyScalar(1.35);
+      facadeTint.day.copy(new THREE.Color(p.buildingBase)).lerp(WHITE, .46);
+    });
   }
 
   function buildBuildings(): void {
@@ -214,7 +298,12 @@ export function createScene(ctx: RenderContext): SceneHandle {
       const body = new THREE.Group(); body.position.set(b.x, .22, b.z); body.rotation.y = b.rotY; root.add(body);
       const shade = new THREE.Color(theme.buildingBase).offsetHSL((b.colorIndex % 3 - 1) * .018, 0, (b.colorIndex % 3 - 1) * .025);
       const shell = standard(shade.getStyle(), .75, .08);
-      addRecolor((p) => shell.color.copy(tmpColor.set(p.buildingBase).offsetHSL((b.colorIndex % 3 - 1) * .018, 0, (b.colorIndex % 3 - 1) * .025)));
+      const shellTint = addTint(shell, shell.color.clone(), shell.color.clone().lerp(WHITE, .40));
+      addRecolor((p) => {
+        shellTint.night.copy(tmpColor.set(p.buildingBase).offsetHSL((b.colorIndex % 3 - 1) * .018, 0, (b.colorIndex % 3 - 1) * .025));
+        shellTint.day.copy(shellTint.night).lerp(WHITE, .40);
+        shell.color.copy(shellTint.night);
+      });
       const building = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), shell); building.position.y = b.h / 2; body.add(building);
       addFacadeWindows(b, body);
       const trim = standard(theme.buildingTrim, .56, .24);
@@ -389,7 +478,7 @@ export function createScene(ctx: RenderContext): SceneHandle {
     ctx.scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity * .7);
   }
   function clear(): void {
-    root.clear(); pickables.signs.length = 0; pickables.lamps.length = 0; pickables.water.length = 0; signs.length = 0; lamps.length = 0; signals.length = 0; waterMesh = null; waterTexture = null; waterUniforms = null; skyUniforms = null; skyStars = null; key = null; hemi = null; ambient = null;
+    root.clear(); pickables.signs.length = 0; pickables.lamps.length = 0; pickables.water.length = 0; signs.length = 0; lamps.length = 0; signals.length = 0; waterMesh = null; waterTexture = null; waterUniforms = null; skyUniforms = null; skyStars = null; wetUniformsRef = null; key = null; hemi = null; ambient = null;
     for (const material of materials) material.dispose(); for (const texture of textures) texture.dispose(); materials.clear(); textures.clear(); recolors.length = 0;
   }
   function setTheme(next: ThemePalette): void {
@@ -400,20 +489,27 @@ export function createScene(ctx: RenderContext): SceneHandle {
     if (ctx.scene.fog instanceof THREE.FogExp2) ctx.scene.fog.color.set(next.fogColor);
   }
   function update(dt: number, state: AppState, sim: SimBridge): void {
-    const env = sim.env; const day = env[ENV.dayFactor] ?? 0; const night = env[ENV.nightFactor] ?? 1; const windowLit = env[ENV.windowLit] ?? night; const wetness = env[ENV.wetness] ?? 0; const precipFog = env[ENV.precipFog] ?? 0;
-    root.traverse((object) => { const material = object.userData.windowMaterial as THREE.MeshStandardMaterial | undefined; if (material) material.emissiveIntensity = windowLit * (object.userData.windowBias as number) * 0.42; });
+    const env = sim.env; const day = env[ENV.dayFactor] ?? 0; const night = env[ENV.nightFactor] ?? 1; const neon = env[ENV.neonBoost] ?? 1;
+    for (const entry of tints) entry.mat.color.copy(entry.night).lerp(entry.day, day); const windowLit = env[ENV.windowLit] ?? night; const wetness = env[ENV.wetness] ?? 0; const precipFog = env[ENV.precipFog] ?? 0;
+    root.traverse((object) => { const material = object.userData.windowMaterial as THREE.MeshStandardMaterial | undefined; if (material) material.emissiveIntensity = windowLit * (object.userData.windowBias as number) * 0.95; });
     const signData = sim.signs;
-    for (let i = 0; i < signs.length; i++) { const visual = signs[i]; if (!visual) continue; const flash = signData[i * 2] ?? 0; const glitch = signData[i * 2 + 1] ?? 0; const jitter = glitch > .06 ? Math.sin((sim.elapsed * 83 + i * 17)) * glitch * .13 : 0; visual.group.position.set(visual.base.x + jitter, visual.base.y + (glitch > .35 ? Math.cos(sim.elapsed * 51 + i) * .035 : 0), visual.base.z); visual.glow.opacity = .12 + (flash + glitch * .4) * .55; visual.face.scale.x = glitch > .18 ? 1 + Math.sin(sim.elapsed * 69 + i) * glitch * .08 : 1; }
+    for (let i = 0; i < signs.length; i++) { const visual = signs[i]; if (!visual) continue; const flash = signData[i * 2] ?? 0; const glitch = signData[i * 2 + 1] ?? 0; const jitter = glitch > .06 ? Math.sin((sim.elapsed * 83 + i * 17)) * glitch * .13 : 0; visual.group.position.set(visual.base.x + jitter, visual.base.y + (glitch > .35 ? Math.cos(sim.elapsed * 51 + i) * .035 : 0), visual.base.z); visual.glow.opacity = (.12 + (flash + glitch * .4) * .55) * (.30 + neon * .70); visual.face.scale.x = glitch > .18 ? 1 + Math.sin(sim.elapsed * 69 + i) * glitch * .08 : 1; (visual.face.material as THREE.MeshBasicMaterial).color.setScalar(.34 + neon * .66); }
     const lampData = sim.lamps;
     for (let i = 0; i < lamps.length; i++) { const visual = lamps[i]; if (!visual) continue; const on = lampData[i * 2] ?? 0; const flicker = lampData[i * 2 + 1] ?? 1; const strength = on * (.48 + flicker * .52) * (.25 + night * .75); visual.glow.emissiveIntensity = strength * 5; visual.cone.opacity = strength * .055; visual.pool.opacity = strength * .12; }
     const signalData = sim.signals;
     for (let i = 0; i < signals.length; i++) { const visual = signals[i]; if (!visual) continue; for (let j = 0; j < 3; j++) { const v = signalData[i * 3 + j] ?? 0; visual.lenses[j].emissiveIntensity = v * 4; visual.glows[j].opacity = v * .7; } }
     if (waterTexture) { const values = sim.water; const pixels = waterTexture.image.data as Uint8Array; const n = Math.min(values.length, pixels.length); for (let i = 0; i < n; i++) pixels[i] = Math.max(0, Math.min(255, Math.round((values[i] * .5 + .5) * 255))); waterTexture.needsUpdate = true; }
     if (waterUniforms) { waterUniforms.time.value += dt; waterUniforms.wet.value = wetness; }
+    if (wetUniformsRef) { wetUniformsRef.time.value += dt; wetUniformsRef.wet.value = Math.max(wetness, state.rain * .8) * (.10 + night * .90); }
     if (skyUniforms) skyUniforms.day.value = day;
     if (skyStars && skyStars.material instanceof THREE.PointsMaterial) skyStars.material.opacity = Math.max(0, night * .92 - day * .35);
-    if (key) { key.intensity = .25 + day * 1.6; key.position.set(Math.cos((env[ENV.hour] ?? 21) / 24 * Math.PI * 2) * 45, 20 + day * 48, 24); }
-    if (hemi) hemi.intensity = .62 + day * .55; if (ambient) ambient.intensity = .55 - day * .25;
+    if (key) {
+      key.intensity = .25 + day * 1.6;
+      key.color.copy(new THREE.Color(theme.keyLight)).lerp(new THREE.Color('#ffe9d0'), day * .85);
+      key.position.set(Math.cos((env[ENV.hour] ?? 21) / 24 * Math.PI * 2) * 45, 20 + day * 48, 24);
+    }
+    if (hemi) { hemi.intensity = .62 + day * .30; hemi.color.copy(new THREE.Color(theme.fillLight)).lerp(new THREE.Color('#cfe0ff'), day * .8); }
+    if (ambient) { ambient.intensity = .55 - day * .25; ambient.color.copy(new THREE.Color(theme.ambient)).lerp(new THREE.Color('#6a6a86'), day * .75); }
     if (ctx.scene.fog instanceof THREE.FogExp2) ctx.scene.fog.density = theme.fogDensity * (.28 + state.fog * .72 + precipFog * .7);
   }
 

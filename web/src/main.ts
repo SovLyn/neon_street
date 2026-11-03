@@ -36,6 +36,9 @@ interface NeonDebug {
   shot(): string;
   pickAt(x: number, y: number): string | null;
   setCamera(px: number, py: number, pz: number, tx: number, ty: number, tz: number): void;
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  signScreen(index: number): { x: number; y: number } | null;
 }
 
 declare global {
@@ -118,6 +121,7 @@ async function boot(): Promise<void> {
   resetCamera();
 
   let ui: UiHandle | null = null;
+  let debugRef: NeonDebug | null = null;
 
   function applyLayout(layout: Layout): void {
     ctx.layout = layout;
@@ -146,6 +150,7 @@ async function boot(): Promise<void> {
     sim.reseed(next);
     store.set({ seed: next });
     applyLayout(sim.layout());
+    if (debugRef) debugRef.layoutSeed = sim.seed;
   }
 
   function capturePng(): string {
@@ -164,6 +169,8 @@ async function boot(): Promise<void> {
   /* ---------------------------------------------------------------- picking */
 
   const raycaster = new THREE.Raycaster();
+  // Reflective surfaces live on a dedicated layer, so picking must see every layer.
+  raycaster.layers.enableAll();
   const ndc = new THREE.Vector2();
   const pointerDown = { x: 0, y: 0, t: 0, moved: 0 };
 
@@ -412,6 +419,18 @@ async function boot(): Promise<void> {
     },
     shot: () => capturePng(),
     pickAt: (x, y) => pick(x, y),
+    scene,
+    camera,
+    signScreen: (index) => {
+      const object = sceneHandle.pickables.signs[index];
+      if (!object) return null;
+      const point = object.getWorldPosition(new THREE.Vector3()).project(camera);
+      const rect = renderer.domElement.getBoundingClientRect();
+      return {
+        x: rect.left + (point.x * 0.5 + 0.5) * rect.width,
+        y: rect.top + (-point.y * 0.5 + 0.5) * rect.height,
+      };
+    },
     setCamera: (px, py, pz, tx, ty, tz) => {
       camera.position.set(px, py, pz);
       controls.target.set(tx, ty, tz);
@@ -420,8 +439,8 @@ async function boot(): Promise<void> {
       controls.update();
     },
   };
+  debugRef = debug;
   window.__neon = debug;
-  debug.layoutSeed = sim.layout().seed;
 
   /* ---------------------------------------------------------------- resize */
 
