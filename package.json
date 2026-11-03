@@ -1,0 +1,27 @@
+{
+  "name": "neon-street",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "霓虹街区 — a procedurally generated neon block rendered with three.js, simulated in Rust/WebAssembly",
+  "scripts": {
+    "build:wasm": "wasm-pack build . --target web --out-dir web/pkg --out-name neon_street --release",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "test:e2e": "playwright test",
+    "verify": "npm run typecheck && vite build"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.6",
+    "@types/three": "^0.187.0",
+    "playwright": "^1.64.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5"
+  }
+}

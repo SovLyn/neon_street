@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="synthwave">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="霓虹街区 NEON STREET — 程序化生成的低多边形霓虹街区，Rust/WebAssembly 驱动，three.js 渲染。"
+    />
+    <title>霓虹街区 · NEON STREET</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud"></div>
+    <div id="boot">
+      <div class="boot-inner">
+        <div class="boot-kicker">RUST + WASM + THREE.JS</div>
+        <div class="boot-title">霓虹街区</div>
+        <div class="boot-sub">正在生成街区…</div>
+      </div>
+    </div>
+    <noscript>这个场景需要启用 JavaScript。</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

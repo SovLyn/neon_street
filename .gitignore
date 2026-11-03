@@ -1,2 +1,12 @@
 /target
 MISSION.md
+/node_modules
+/dist
+/web/pkg
+/test-results
+/playwright-report
+/.vite
+*.log
+.DS_Store
+# Local Playwright browser binaries
+/playwright-browsers
