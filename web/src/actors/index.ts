@@ -169,7 +169,7 @@ export function createActors(ctx: RenderContext): ActorsHandle {
         const o = i * CAR_STRIDE;
         if (Math.max(0, Math.min(KIND_COUNT - 1, data[o + CAR.kind] | 0)) !== kind) continue;
         const x = data[o + CAR.x]; const y = data[o + CAR.y]; const z = data[o + CAR.z];
-        if (inWater(layout, x, z)) continue;
+        if (y < -10 || inWater(layout, x, z)) continue;
         const yaw = data[o + CAR.rotY]; const type = CAR_SPECS[kind];
         set.body.setMatrixAt(used, compose(x, y + type[1] * .5, z, yaw, type[0], type[1], type[2]));
         set.cabin.setMatrixAt(used, compose(x, y + type[1] + type[4] * .36, z - .08, yaw, type[3], type[4], type[5]));
@@ -185,7 +185,7 @@ export function createActors(ctx: RenderContext): ActorsHandle {
     let lightsUsed = 0; let trailsUsed = 0;
     for (let i = 0; i < lightCount; i += 1) {
       const o = i * CAR_STRIDE; const x = data[o + CAR.x]; const y = data[o + CAR.y]; const z = data[o + CAR.z];
-      if (inWater(layout, x, z)) { trailLife[i] = 0; continue; }
+      if (y < -10 || inWater(layout, x, z)) { trailLife[i] = 0; continue; }
       const yaw = data[o + CAR.rotY]; const speed = Math.max(0, Math.min(1, data[o + CAR.speedNorm])); const braking = data[o + CAR.brake] > .5;
       const fx = Math.sin(yaw); const fz = Math.cos(yaw); const rx = Math.cos(yaw); const rz = -Math.sin(yaw);
       for (const front of [true, false]) {

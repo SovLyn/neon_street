@@ -22,6 +22,7 @@ interface NeonDebug {
   sim(): {
     timeOfDay: number;
     cars: number;
+    activeCars: number;
     peds: number;
     signFlashSum: number;
     lampOn: number;
@@ -29,6 +30,8 @@ interface NeonDebug {
     env: number[];
   };
   setSeed(seed: number): void;
+  triggerEvent(): void;
+  events(): { events: unknown[] };
   clickSign(i: number): void;
   clickLamp(i: number): void;
   clickWater(x: number, z: number): void;
@@ -383,9 +386,13 @@ async function boot(): Promise<void> {
       for (let i = 0; i < lamps.length; i += 2) lampOn += lamps[i] > 0.5 ? 1 : 0;
       let waterSum = 0;
       for (const v of sim.water) waterSum += Math.abs(v);
+      const carData = sim.cars;
+      let activeCars = 0;
+      for (let i = 0; i < carData.length; i += 8) if (carData[i + 1] > -10) activeCars += 1;
       return {
         timeOfDay: sim.timeOfDay,
-        cars: sim.cars.length / 8,
+        cars: carData.length / 8,
+        activeCars,
         peds: sim.peds.length / 7,
         signFlashSum,
         lampOn,
@@ -394,6 +401,8 @@ async function boot(): Promise<void> {
       };
     },
     setSeed: (seed) => reseed(seed),
+    triggerEvent: () => sim.triggerEvent(),
+    events: () => sim.events(),
     clickSign: (i) => activate(`sign:${i}`),
     clickLamp: (i) => activate(`lamp:${i}`),
     clickWater: (x, z) => activate(`water:${x}:${z}`),

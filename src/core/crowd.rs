@@ -67,7 +67,8 @@ impl Crowd {
             return;
         }
         for (p, s) in self.peds.chunks_exact_mut(7).zip(&mut self.people) {
-            p[5] = if s.threshold < rain.clamp(0., 1.) {
+            // Even in a downpour a few people walk bare-headed; keeps the crowd varied.
+            p[5] = if s.threshold < rain.clamp(0., 1.) * 0.82 {
                 1.
             } else {
                 0.
@@ -147,10 +148,9 @@ mod tests {
         c.advance(0., 0., sig);
         assert_eq!(c.peds.chunks_exact(7).filter(|p| p[5] > 0.).count(), 0);
         c.advance(0., 1., sig);
-        assert_eq!(
-            c.peds.chunks_exact(7).filter(|p| p[5] > 0.).count(),
-            c.people.len()
-        );
+        let sheltered = c.peds.chunks_exact(7).filter(|p| p[5] > 0.).count();
+        assert!(sheltered > c.people.len() / 2, "most walkers should use an umbrella");
+        assert!(sheltered < c.people.len(), "a few should still walk bare-headed");
     }
     #[test]
     fn deterministic_initial_state() {

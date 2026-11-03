@@ -54,6 +54,34 @@ pub struct Sim {
     lamp_on: Vec<f32>,
 }
 
+/// Share of the fleet that is on the road at a given hour. Quiet before dawn,
+/// busy all evening — this is a neon district, not an office park.
+fn traffic_density(hour: f32) -> f32 {
+    if !hour.is_finite() {
+        return 1.0;
+    }
+    const KEYS: [(f32, f32); 7] = [
+        (0.0, 0.82),
+        (3.0, 0.36),
+        (6.0, 0.58),
+        (9.0, 0.92),
+        (12.0, 1.0),
+        (20.0, 1.0),
+        (24.0, 0.82),
+    ];
+    let h = hour.rem_euclid(24.0);
+    for pair in KEYS.windows(2) {
+        let (h0, d0) = pair[0];
+        let (h1, d1) = pair[1];
+        if h >= h0 && h <= h1 {
+            let t = if h1 > h0 { (h - h0) / (h1 - h0) } else { 0.0 };
+            let t = t * t * (3.0 - 2.0 * t);
+            return d0 + (d1 - d0) * t;
+        }
+    }
+    1.0
+}
+
 fn lane_configs(world: &layout::Layout) -> Vec<traffic::LaneConfig> {
     let mut lanes = Vec::with_capacity(8);
     for road in &world.roads {
@@ -249,6 +277,14 @@ impl Sim {
         let state = clock::signal_state(self.elapsed);
 
         self.traffic.advance(dt, state);
+
+        // Density follows the clock: parked cars are parked out of sight (-60 m).
+        let density = traffic_density(self.clock.hour);
+        let total = self.traffic.cars.len() / 8;
+        let active = ((total as f32) * density).round() as usize;
+        for i in 0..total {
+            self.traffic.cars[i * 8 + 1] = if i < active { 0.0 } else { -60.0 };
+        }
         self.crowd.advance(dt, self.rain, state);
         self.particles.advance(dt, self.rain, self.snow);
         self.water.advance(dt);
@@ -359,5 +395,45 @@ impl Sim {
     }
     pub fn events_json(&self) -> String {
         self.events.json()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn density_follows_time_of_day() {
+        assert!(traffic_density(3.0) < traffic_density(12.0));
+        assert!(traffic_density(3.0) >= 0.3);
+        assert!(traffic_density(12.0) <= 1.0);
+        assert!(traffic_density(21.0) > 0.7, "evening should stay busy");
+        assert!(traffic_density(f32::NAN).is_finite());
+    }
+
+    #[test]
+    fn env_and_buffers_are_consistent() {
+        let mut sim = Sim::new(11);
+        sim.set_time_of_day(22.0);
+        sim.advance(0.05);
+        assert_eq!(sim.env.len(), 8);
+        assert_eq!(sim.signs.len(), sim.layout.signs.len() * 2);
+        assert_eq!(sim.lamps.len(), sim.layout.lamps.len() * 2);
+        assert_eq!(sim.signals.len(), sim.layout.signals.len() * 3);
+        assert!(sim.env[4] > 0.6, "windows should be lit at 22:00");
+    }
+
+    #[test]
+    fn interactions_are_bounded() {
+        let mut sim = Sim::new(5);
+        sim.flash_sign(999);
+        sim.toggle_lamp(999);
+        sim.add_ripple(f32::NAN, 0.0, 1.0);
+        let sign = sim.layout.signs.len();
+        sim.flash_sign((sign - 1) as u32);
+        assert!(sim.signs[(sign - 1) * 2] > 0.9);
+        sim.toggle_lamp(0);
+        sim.advance(0.05);
+        assert_eq!(sim.lamps[0], 0.0);
     }
 }
