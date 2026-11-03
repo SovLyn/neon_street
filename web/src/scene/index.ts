@@ -478,6 +478,11 @@ export function createScene(ctx: RenderContext): SceneHandle {
     ctx.scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity * .7);
   }
   function clear(): void {
+    // Dispose geometries too: "换一条街" can be pressed repeatedly.
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+    });
     root.clear(); pickables.signs.length = 0; pickables.lamps.length = 0; pickables.water.length = 0; signs.length = 0; lamps.length = 0; signals.length = 0; waterMesh = null; waterTexture = null; waterUniforms = null; skyUniforms = null; skyStars = null; wetUniformsRef = null; key = null; hemi = null; ambient = null;
     for (const material of materials) material.dispose(); for (const texture of textures) texture.dispose(); materials.clear(); textures.clear(); recolors.length = 0;
   }

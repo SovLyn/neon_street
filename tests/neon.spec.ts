@@ -25,8 +25,9 @@ interface SampleInfo {
 
 async function gotoApp(page: Page, search = ''): Promise<void> {
   await page.goto(`/${search}`);
-  await expect.poll(async () => page.evaluate(() => Boolean(window.__neon?.ready))).toBe(true);
-  await expect.poll(async () => page.evaluate(() => window.__neon?.frame ?? 0)).toBeGreaterThan(5);
+  await expect.poll(async () => page.evaluate(() => Boolean(window.__neon?.ready)), { timeout: 40_000 }).toBe(true);
+  // Software WebGL on CI runners is slow; give the first frames room to happen.
+  await expect.poll(async () => page.evaluate(() => window.__neon?.frame ?? 0), { timeout: 40_000 }).toBeGreaterThan(5);
   await page.evaluate(() => window.__neon?.set({ autoCycle: false }));
 }
 
